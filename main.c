@@ -3,8 +3,16 @@
 #include "malloc.h"
 #include "math.h"
 
-#define N 100 // matrix size
+#define N 12000 // matrix size
 #define DATA_ARRAYS_NUMBER 2
+
+void readMatrix(double *array) {
+    FILE *file = fopen("file.txt", "r");
+    for (int i = 0; i < N; ++i) {
+        fscanf(file, "%lf", array + i);
+    }
+    fclose(file);
+}
 
 double calculateNorm(const double *vector, size_t size) {
     double res = 0;
@@ -101,8 +109,8 @@ void separator_free(int **separator) {
     free(separator);
 }
 
-void accuracy(const double *xNext, const double *receiverArray, const double *b, double epsilon,
-             int **matrixSeparationParameters, int **ySeparationParameters, double bNorm) {
+int accuracy(const double *xNext, const double *receiverArray, const double *b, double epsilon,
+              int **matrixSeparationParameters, int **ySeparationParameters, double bNorm) {
     int rank;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
@@ -134,6 +142,12 @@ void accuracy(const double *xNext, const double *receiverArray, const double *b,
     printf("%f accuracy calculateNorm\n", firstNorm);
     free(yFragment);
     free(yN);
+    if (firstNorm/bNorm < epsilon){
+        return 1;
+    }
+    else {
+        return 0;
+    }
 }
 
 
@@ -286,11 +300,22 @@ int main() {
 
     double bNorm = calculateNorm(b->data, N);
 
-    double *xNext = iterativeAlgorithm(x->data, receiverArray, b->data, matrixSeparationParameters,
-                                       ySeparationParameters, xSeparationParameters, xNextFragment);
-    accuracy(xNext, receiverArray, b->data, 0.00000000001, matrixSeparationParameters, ySeparationParameters,
-             bNorm);
-    x->data = xNext;
+    int flag = 0;
+    int count = 0;
+    while (flag == 0) {
+        double *xNext = iterativeAlgorithm(x->data, receiverArray, b->data, matrixSeparationParameters,
+                                           ySeparationParameters, xSeparationParameters, xNextFragment);
+        flag = accuracy(xNext, receiverArray, b->data, 0.00000000001, matrixSeparationParameters, ySeparationParameters,
+                 bNorm);
+        x->data = xNext;
+        count++;
+        if (flag == 1 && rank == 0) {
+            for (int i = 0; i < N; ++i) {
+                printf("%f\n", xNext[i]);
+            }
+        }
+    }
+
     free(x);
     free(tmp);
     free(b);
