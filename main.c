@@ -247,7 +247,7 @@ void diagonalFillMatrix(struct Matrix *matrix) {
 
 void nPlusOneFillMatrix(struct Matrix *matrix) {
     for (int i = 0; i < N; ++i) {
-        matrix->data[i] = i;  //i+200
+        matrix->data[i] = N  + 1;  //i+200
     }
 }
 
