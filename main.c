@@ -6,14 +6,6 @@
 #define N 12000 // matrix size
 #define DATA_ARRAYS_NUMBER 2
 
-void readMatrix(double *array) {
-    FILE *file = fopen("file.txt", "r");
-    for (int i = 0; i < N; ++i) {
-        fscanf(file, "%lf", array + i);
-    }
-    fclose(file);
-}
-
 double calculateNorm(const double *vector, size_t size) {
     double res = 0;
     for (int i = 0; i < size; ++i) {
@@ -109,7 +101,7 @@ void separator_free(int **separator) {
     free(separator);
 }
 
-int accuracy(const double *xNext, const double *receiverArray, const double *b, double epsilon,
+int precision(const double *xNext, const double *receiverArray, const double *b, double epsilon,
               int **matrixSeparationParameters, int **ySeparationParameters, double bNorm) {
     int rank;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -139,7 +131,7 @@ int accuracy(const double *xNext, const double *receiverArray, const double *b, 
                    ySeparationParameters[1], MPI_DOUBLE, MPI_COMM_WORLD);
 
     double firstNorm = calculateNorm(yN, N);
-    printf("%f accuracy calculateNorm\n", firstNorm);
+    printf("%f norm precision\n", firstNorm);
     free(yFragment);
     free(yN);
     if (firstNorm/bNorm < epsilon){
@@ -261,7 +253,6 @@ void nPlusOneFillMatrix(struct Matrix *matrix) {
 
 int main() {
     MPI_Init(NULL, NULL);
-
     double startTime = MPI_Wtime();
     struct Matrix *matrixA = initMatrix(N, N);
 
@@ -271,7 +262,6 @@ int main() {
     int rank;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-
     int **matrixSeparationParameters = splitMatrices(commSize, matrixA->height * matrixA->width, NULL);
     int **xSeparationParameters = splitMatrices(commSize, N, matrixSeparationParameters);
     int **ySeparationParameters = splitMatrices(commSize, N, matrixSeparationParameters);
@@ -279,24 +269,26 @@ int main() {
     double *receiverArray = newDoubleArray(matrixSeparationParameters[0][rank]);
 
     MPI_Barrier(MPI_COMM_WORLD);
-
     struct Matrix *x = initMatrix(1, N);
     double *tmp = x->data;
     struct Matrix *b = initMatrix(1, N);
     if (rank == 0) {
         diagonalFillMatrix(matrixA);
-        MPI_Scatterv(matrixA, matrixSeparationParameters[0], matrixSeparationParameters[1], MPI_DOUBLE,
+        MPI_Scatterv(matrixA->data, matrixSeparationParameters[0], matrixSeparationParameters[1], MPI_DOUBLE,
                      receiverArray, matrixSeparationParameters[0][rank], MPI_DOUBLE, 0, MPI_COMM_WORLD);
+//        if (rank == 0) {
+//            printf("ok");
+//            exit(0);
+//        }
         nPlusOneFillMatrix(b);
     }
 
     if (rank != 0) {
-        MPI_Scatterv(matrixA, matrixSeparationParameters[0], matrixSeparationParameters[1], MPI_DOUBLE,
+        MPI_Scatterv(matrixA->data, matrixSeparationParameters[0], matrixSeparationParameters[1], MPI_DOUBLE,
                      receiverArray, matrixSeparationParameters[0][rank], MPI_DOUBLE, 0, MPI_COMM_WORLD);
     }
 
-
-    MPI_Bcast(b, N, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(b->data, N, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
     double bNorm = calculateNorm(b->data, N);
 
@@ -305,7 +297,7 @@ int main() {
     while (flag == 0) {
         double *xNext = iterativeAlgorithm(x->data, receiverArray, b->data, matrixSeparationParameters,
                                            ySeparationParameters, xSeparationParameters, xNextFragment);
-        flag = accuracy(xNext, receiverArray, b->data, 0.00000000001, matrixSeparationParameters, ySeparationParameters,
+        flag = precision(xNext, receiverArray, b->data, 0.00000000001, matrixSeparationParameters, ySeparationParameters,
                  bNorm);
         x->data = xNext;
         count++;
@@ -316,8 +308,10 @@ int main() {
         }
     }
 
+    free(x->data);
     free(x);
     free(tmp);
+    free(b->data);
     free(b);
     separator_free(matrixSeparationParameters);
     separator_free(xSeparationParameters);
