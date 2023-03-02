@@ -1,10 +1,9 @@
 #include <stdio.h>
-#include <mpi.h>
 #include "malloc.h"
-#include "math.h"
+#include <math.h>
+#include "time.h"
 
 #define N 12000 // matrix size
-#define DATA_ARRAYS_NUMBER 2
 
 double calculateNorm(const double *vector, size_t size) {
     double res = 0;
@@ -14,20 +13,8 @@ double calculateNorm(const double *vector, size_t size) {
     return sqrt(res);
 }
 
-int **newIntPtrArray(size_t len) {
-    return (int **) calloc(len, sizeof(int *));
-}
-
-int *newIntArray(size_t len) {
-    return (int *) calloc(len, sizeof(int));
-}
-
 double *newDoubleArray(size_t len) {
     return (double *) calloc(len, sizeof(double));
-}
-
-double **newDoublePtrArray(size_t len) {
-    return (double **) calloc(len, sizeof(double *));
 }
 
 struct Matrix {
@@ -44,96 +31,29 @@ struct Matrix *initMatrix(size_t height, size_t width) {
     return matrix;
 }
 
-int **splitMatrices(size_t procNumber, size_t capacity, int **previousSeparationParameters) {
-    int **separationParameters = newIntPtrArray(DATA_ARRAYS_NUMBER);
-
-    if (capacity == N) {
-        // Vector separation
-        int *lenArray = newIntArray(procNumber);
-        for (int i = 0; i < procNumber; ++i) {
-            lenArray[i] = previousSeparationParameters[0][i] / N;
-        }
-
-        int *indentArray = newIntArray(procNumber);
-        for (int i = 0; i < procNumber; ++i) {
-            if (i == 0) {
-                indentArray[i] = 0;
-            } else {
-                indentArray[i] = indentArray[i - 1] + lenArray[i - 1];
-            }
-        }
-        separationParameters[0] = lenArray;
-        separationParameters[1] = indentArray;
-    } else {
-        // Matrix separation
-        int *lenArray = newIntArray(procNumber);
-        {
-            size_t capacityCopy = capacity;
-            int i = 0;
-            while (i < procNumber - 1) {
-                capacityCopy -= N * (N / procNumber);
-                lenArray[i] = N * (N / procNumber);
-                ++i;
-            }
-            lenArray[i] = capacityCopy;
-        }
-
-        int *indentArray = newIntArray(procNumber);
-
-        for (int i = 0; i < procNumber; ++i) {
-            if (i == 0) {
-                indentArray[i] = 0;
-            } else {
-                indentArray[i] = indentArray[i - 1] + lenArray[i - 1];
-            }
-        }
-        separationParameters[0] = lenArray;
-        separationParameters[1] = indentArray;
-    }
-
-    return separationParameters;
-}
-
-void separator_free(int **separator) {
-    for (int i = 0; i < 2; ++i) {
-        free(separator[i]);
-    }
-    free(separator);
-}
 
 int precision(const double *xNext, const double *receiverArray, const double *b, double epsilon,
-              int **matrixSeparationParameters, int **ySeparationParameters, double bNorm) {
-    int rank;
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+              double bNorm) {
 
-    int commSize;
-    MPI_Comm_size(MPI_COMM_WORLD, &commSize);
-
-
-    double *yFragment = newDoubleArray(matrixSeparationParameters[0][rank] / N);
-    for (int i = 0; i < (matrixSeparationParameters[0][rank] / N); ++i) {
+    double *yFragment = newDoubleArray(N);
+    for (int i = 0; i < N; ++i) {
         yFragment[i] = 0;
     }
 
     //  Ax^n
-    for (int i = 0; i < matrixSeparationParameters[0][rank]; ++i) {
+    for (int i = 0; i < N; ++i) {
         yFragment[i / N] += receiverArray[i] * xNext[i % N];
     }
 
     //  Ax^n - b
-    for (int i = 0; i < (matrixSeparationParameters[0][rank] / N); ++i) {
-        yFragment[i] -= b[i + rank];
+    for (int i = 0; i < N; ++i) {
+        yFragment[i] -= b[i];
     }
 
 
-    double *yN = newDoubleArray(N);
-    MPI_Allgatherv(yFragment, ySeparationParameters[0][rank], MPI_DOUBLE, yN, ySeparationParameters[0],
-                   ySeparationParameters[1], MPI_DOUBLE, MPI_COMM_WORLD);
-
-    double firstNorm = calculateNorm(yN, N);
+    double firstNorm = calculateNorm(yFragment, N);
     printf("%f norm precision\n", firstNorm);
     free(yFragment);
-    free(yN);
     if (firstNorm/bNorm < epsilon){
         return 1;
     }
@@ -142,95 +62,42 @@ int precision(const double *xNext, const double *receiverArray, const double *b,
     }
 }
 
-
-double *iterativeAlgorithm(const double *xPrevious, const double *matrixFragment, const double *b,
-                           int **matrixSeparationParameters, int **ySeparationParameters,
-                           int **xSeparationParameters, double *xNextFragment) {
-    int rank;
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-
-    int commSize;
-    MPI_Comm_size(MPI_COMM_WORLD, &commSize);
-
-    double *yFragment = newDoubleArray((matrixSeparationParameters[0][rank] / N));
-    for (int i = 0; i < (matrixSeparationParameters[0][rank] / N); ++i) {
+double *iterativeAlgorithm(const double *xPrevious, const double *matrixFragment, const double *b) {
+    double *yFragment = newDoubleArray(N);
+    for (int i = 0; i < N; ++i) {
         yFragment[i] = 0;
     }
 
     //  Ax^n
-    for (int i = 0; i < matrixSeparationParameters[0][rank]; ++i) {
+    for (int i = 0; i < N; ++i) {
         yFragment[i / N] += matrixFragment[i] * xPrevious[i % N];
     }
 
     //  Ax^n - b
-    for (int i = 0; i < (matrixSeparationParameters[0][rank] / N); ++i) {
-        yFragment[i] -= b[i + rank];
+    for (int i = 0; i < N; ++i) {
+        yFragment[i] -= b[i];
     }
 
-    // Cuts the vector into parts depending on the number of threads
-    double *yN = newDoubleArray(N);
-    MPI_Allgatherv(yFragment, ySeparationParameters[0][rank], MPI_DOUBLE, yN, ySeparationParameters[0],
-                   ySeparationParameters[1], MPI_DOUBLE, MPI_COMM_WORLD);
-
-    double *matrixYFragment = newDoubleArray(matrixSeparationParameters[0][rank] / N);
-    for (int i = 0; i < matrixSeparationParameters[0][rank]; ++i) {
-        matrixYFragment[i / N] += matrixFragment[i] * yN[i % N];
+    double *matrixYFragment = newDoubleArray(N);
+    for (int i = 0; i < N; ++i) {
+        matrixYFragment[i] += matrixFragment[i] * yFragment[i % N];
     }
 
     double matrixYScalarMultiFragment = 0;
-    for (int i = 0; i < matrixSeparationParameters[0][rank] / N; ++i) {
+    for (int i = 0; i < N; ++i) {
         matrixYScalarMultiFragment += matrixYFragment[i] * matrixYFragment[i];
     }
 
     double yMatrixYScalarMultiFragment = 0;
-    for (int i = 0; i < matrixSeparationParameters[0][rank] / N; ++i) {
-        yMatrixYScalarMultiFragment += yN[i + rank] * matrixYFragment[i];
-    }
-
-    double *dualMatrixYScalarMulti = newDoubleArray(commSize);
-    MPI_Gather(&matrixYScalarMultiFragment, 1, MPI_DOUBLE, dualMatrixYScalarMulti, 1, MPI_DOUBLE, 0,
-               MPI_COMM_WORLD);
-
-    double *yMatrixYScalarMulti = newDoubleArray(commSize);
-    MPI_Gather(&yMatrixYScalarMultiFragment, 1, MPI_DOUBLE, yMatrixYScalarMulti, 1, MPI_DOUBLE, 0,
-               MPI_COMM_WORLD);
-
-    double t;
-    if (rank == 0) {
-        double yMatrixYSum = 0;
-        double matrixYSum = 0;
-        for (int i = 0; i < commSize; ++i) {
-            yMatrixYSum += yMatrixYScalarMulti[i];
-        }
-        for (int i = 0; i < commSize; ++i) {
-            matrixYSum += dualMatrixYScalarMulti[i];
-        }
-        t = (double) (yMatrixYSum / matrixYSum);
-        MPI_Bcast(&t, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-    }
-    if (rank != 0) {
-        MPI_Bcast(&t, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-    }
-
-
-    for (int i = 0; i < matrixSeparationParameters[0][rank] / N; ++i) {
-        xNextFragment[i] = 0;
-    }
-
-    for (int i = 0; i < matrixSeparationParameters[0][rank] / N; ++i) {
-        xNextFragment[i] += xPrevious[i + rank] - (t * yN[i + rank]);
+    for (int i = 0; i < N; ++i) {
+        yMatrixYScalarMultiFragment += yFragment[i] * matrixYFragment[i];
     }
 
     double *xNext = newDoubleArray(N);
-    MPI_Allgatherv(xNextFragment, matrixSeparationParameters[0][rank] / N, MPI_DOUBLE, xNext,
-                   xSeparationParameters[0], xSeparationParameters[1], MPI_DOUBLE, MPI_COMM_WORLD);
 
     {
         free(yFragment);
-        free(yN);
         free(matrixYFragment);
-        free(dualMatrixYScalarMulti);
-        free(yMatrixYScalarMulti);
     }
     return xNext;
 }
@@ -251,57 +118,22 @@ void nPlusOneFillMatrix(struct Matrix *matrix) {
     }
 }
 
-int main() {
-    MPI_Init(NULL, NULL);
-    double startTime = MPI_Wtime();
-    struct Matrix *matrixA = initMatrix(N, N);
-
-    int commSize;
-    MPI_Comm_size(MPI_COMM_WORLD, &commSize);
-
-    int rank;
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-
-    int **matrixSeparationParameters = splitMatrices(commSize, matrixA->height * matrixA->width, NULL);
-    int **xSeparationParameters = splitMatrices(commSize, N, matrixSeparationParameters);
-    int **ySeparationParameters = splitMatrices(commSize, N, matrixSeparationParameters);
-    double *xNextFragment = newDoubleArray((matrixSeparationParameters[0][rank] / N));
-    double *receiverArray = newDoubleArray(matrixSeparationParameters[0][rank]);
-
-    MPI_Barrier(MPI_COMM_WORLD);
+int main(int argc, char **argv) {
+    struct Matrix *A = initMatrix(N, N);
     struct Matrix *x = initMatrix(1, N);
-    double *tmp = x->data;
     struct Matrix *b = initMatrix(1, N);
-    if (rank == 0) {
-        diagonalFillMatrix(matrixA);
-        MPI_Scatterv(matrixA->data, matrixSeparationParameters[0], matrixSeparationParameters[1], MPI_DOUBLE,
-                     receiverArray, matrixSeparationParameters[0][rank], MPI_DOUBLE, 0, MPI_COMM_WORLD);
-//        if (rank == 0) {
-//            printf("ok");
-//            exit(0);
-//        }
-        nPlusOneFillMatrix(b);
-    }
-
-    if (rank != 0) {
-        MPI_Scatterv(matrixA->data, matrixSeparationParameters[0], matrixSeparationParameters[1], MPI_DOUBLE,
-                     receiverArray, matrixSeparationParameters[0][rank], MPI_DOUBLE, 0, MPI_COMM_WORLD);
-    }
-
-    MPI_Bcast(b->data, N, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-
+    diagonalFillMatrix(A);
+    nPlusOneFillMatrix(b);
     double bNorm = calculateNorm(b->data, N);
+    time_t startTime = time(NULL);
 
     int flag = 0;
     int count = 0;
     while (flag == 0) {
-        double *xNext = iterativeAlgorithm(x->data, receiverArray, b->data, matrixSeparationParameters,
-                                           ySeparationParameters, xSeparationParameters, xNextFragment);
-        flag = precision(xNext, receiverArray, b->data, 0.00000000001, matrixSeparationParameters, ySeparationParameters,
-                 bNorm);
-        x->data = xNext;
+        double *xNext = iterativeAlgorithm(x->data, A->data, b->data);
+        flag = precision(xNext, A->data, b->data, 0.00000000001, bNorm);
         count++;
-        if (flag == 1 && rank == 0) {
+        if (flag == 1) {
             for (int i = 0; i < N; ++i) {
                 printf("%f\n", xNext[i]);
             }
@@ -310,17 +142,9 @@ int main() {
 
     free(x->data);
     free(x);
-    free(tmp);
     free(b->data);
     free(b);
-    separator_free(matrixSeparationParameters);
-    separator_free(xSeparationParameters);
-    separator_free(ySeparationParameters);
-    free(xNextFragment);
-    free(receiverArray);
-    double end_time = MPI_Wtime();
-    printf("Time taken: %lf sec.\n", end_time - startTime);
-
-    MPI_Finalize();
+    time_t endTime = time(0);
+    printf("Time taken: %ld sec.\n", endTime - startTime);
     return 0;
 }
